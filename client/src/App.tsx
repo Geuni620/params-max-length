@@ -1,100 +1,256 @@
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   compressToEncodedURIComponent,
   decompressFromEncodedURIComponent,
 } from "lz-string";
-import "./App.css";
+import { strToU8, strFromU8, compress, decompress } from "fflate";
+
+interface CompressionResult {
+  original: number;
+  lzString: number;
+  fflate: number;
+  selectedMethod: "lzString" | "fflate";
+}
 
 function App() {
+  const [compressionStats, setCompressionStats] =
+    useState<CompressionResult | null>(null);
+  const [currentData, setCurrentData] = useState<number[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Fflate 압축
+  const compressWithFflate = (data: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      try {
+        const uint8 = strToU8(data);
+        compress(uint8, (error, compressed) => {
+          if (error) reject(error);
+          else {
+            const base64 = btoa(
+              String.fromCharCode.apply(null, Array.from(compressed))
+            );
+            resolve(base64);
+          }
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  };
+
+  // Fflate 압축 해제
+  const decompressWithFflate = (compressed: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      try {
+        const uint8 = new Uint8Array(
+          atob(compressed)
+            .split("")
+            .map((c) => c.charCodeAt(0))
+        );
+        decompress(uint8, (error, decompressed) => {
+          if (error) reject(error);
+          else {
+            resolve(strFromU8(decompressed));
+          }
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  };
+
   const parseQueryString = (queryString: string) => {
     const params = new URLSearchParams(queryString);
     return Array.from(params.getAll("companySeq")).map(Number);
   };
 
-  const sendRequest = async (queryString: string) => {
+  const onClick = async () => {
+    setIsLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/test`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          companySeqs: queryString,
-        }),
+      const randomNumbers = Array.from(
+        { length: 1000 },
+        () => Math.floor(Math.random() * 999) + 1
+      );
+
+      const queryString = randomNumbers
+        .map((num) => `companySeq=${num}`)
+        .join("&");
+
+      // 각 방식으로 압축
+      const lzStringCompressed = compressToEncodedURIComponent(queryString);
+      const fflateCompressed = await compressWithFflate(queryString);
+
+      // 가장 효율적인 방법 선택
+      const compressionSizes = {
+        lzString: lzStringCompressed.length,
+        fflate: fflateCompressed.length,
+      };
+
+      const selectedMethod = Object.entries(compressionSizes).reduce((a, b) =>
+        a[1] < b[1] ? a : b
+      )[0] as "lzString" | "fflate";
+
+      setCompressionStats({
+        original: queryString.length,
+        lzString: lzStringCompressed.length,
+        fflate: fflateCompressed.length,
+        selectedMethod,
       });
 
-      const data = await response.text();
-      console.log("서버 응답:", data);
+      const compressedData =
+        selectedMethod === "lzString" ? lzStringCompressed : fflateCompressed;
+      window.history.pushState(
+        {},
+        "",
+        `?q=${encodeURIComponent(compressedData)}&method=${selectedMethod}`
+      );
+
+      setCurrentData(randomNumbers);
     } catch (error) {
       console.error("에러 발생:", error);
+    } finally {
+      setIsLoading(false);
     }
-  };
-
-  const onClick = async () => {
-    const randomNumbers = Array.from(
-      { length: 3000 },
-      () => Math.floor(Math.random() * 999) + 1
-    );
-
-    const queryString = randomNumbers
-      .map((num) => `companySeq=${num}`)
-      .join("&");
-
-    try {
-      const compressedQuery = compressToEncodedURIComponent(queryString);
-      console.log("압축 전 길이:", queryString.length);
-      console.log("압축 후 길이:", compressedQuery.length);
-
-      window.history.pushState({}, "", `?q=${compressedQuery}`);
-      await sendRequest(queryString);
-    } catch (error) {
-      console.error("에러 발생:", error);
-    }
-  };
-
-  // URL에서 현재 데이터 가져오기
-  const getCurrentData = () => {
-    const params = new URLSearchParams(window.location.search);
-    const compressedData = params.get("q");
-
-    if (compressedData) {
-      try {
-        const originalQuery = decompressFromEncodedURIComponent(compressedData);
-        if (originalQuery) {
-          return parseQueryString(originalQuery);
-        }
-      } catch (error) {
-        console.error("데이터 파싱 중 에러:", error);
-      }
-    }
-    return [];
   };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const compressedData = params.get("q");
+    const method = params.get("method") as "lzString" | "fflate" | null;
 
-    if (compressedData) {
-      try {
-        const originalQuery = decompressFromEncodedURIComponent(compressedData);
-        if (originalQuery) {
-          console.log("복원된 데이터 길이:", originalQuery.length);
-          sendRequest(originalQuery);
+    if (compressedData && method) {
+      (async () => {
+        try {
+          let decompressedData = "";
+
+          if (method === "lzString") {
+            decompressedData =
+              decompressFromEncodedURIComponent(compressedData) || "";
+          } else if (method === "fflate") {
+            decompressedData = await decompressWithFflate(
+              decodeURIComponent(compressedData)
+            );
+          }
+
+          if (decompressedData) {
+            const numbers = parseQueryString(decompressedData);
+            setCurrentData(numbers);
+          }
+        } catch (error) {
+          console.error("데이터 복원 중 에러:", error);
         }
-      } catch (error) {
-        console.error("데이터 복원 중 에러:", error);
-      }
+      })();
     }
   }, []);
 
-  const currentData = getCurrentData();
-
   return (
-    <div>
-      <button onClick={onClick}>Call</button>
+    <div style={{ padding: "20px", fontFamily: "Arial, sans-serif" }}>
+      <button
+        onClick={onClick}
+        disabled={isLoading}
+        style={{
+          padding: "12px 24px",
+          fontSize: "16px",
+          backgroundColor: isLoading ? "#ccc" : "#007bff",
+          color: "white",
+          border: "none",
+          borderRadius: "5px",
+          cursor: isLoading ? "not-allowed" : "pointer",
+          transition: "background-color 0.3s",
+        }}
+      >
+        {isLoading ? "처리 중..." : "압축 테스트"}
+      </button>
+
+      {compressionStats && (
+        <div style={{ marginTop: "30px" }}>
+          <h2
+            style={{
+              marginBottom: "20px",
+              color: "#333",
+              borderBottom: "2px solid #007bff",
+              paddingBottom: "10px",
+            }}
+          >
+            압축 결과 비교
+          </h2>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+              gap: "20px",
+              maxWidth: "1200px",
+            }}
+          >
+            {Object.entries(compressionStats)
+              .filter(([key]) => key !== "selectedMethod")
+              .map(([key, value]) => (
+                <div
+                  key={key}
+                  style={{
+                    padding: "20px",
+                    backgroundColor:
+                      key === compressionStats.selectedMethod
+                        ? "#e3f2fd"
+                        : "#f8f9fa",
+                    borderRadius: "8px",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                    border:
+                      key === compressionStats.selectedMethod
+                        ? "2px solid #007bff"
+                        : "none",
+                  }}
+                >
+                  <h3 style={{ margin: "0 0 15px 0", color: "#343a40" }}>
+                    {key === "original"
+                      ? "원본 크기"
+                      : key === "lzString"
+                      ? "LZ-String"
+                      : "Fflate"}
+                  </h3>
+                  <div
+                    style={{
+                      fontSize: "24px",
+                      fontWeight: "bold",
+                      color: "#007bff",
+                    }}
+                  >
+                    {value.toLocaleString()} bytes
+                  </div>
+                  {key !== "original" && (
+                    <div
+                      style={{
+                        color: "#6c757d",
+                        fontSize: "14px",
+                        marginTop: "8px",
+                      }}
+                    >
+                      압축률:{" "}
+                      {((1 - value / compressionStats.original) * 100).toFixed(
+                        1
+                      )}
+                      %
+                      {key === compressionStats.selectedMethod && (
+                        <span
+                          style={{
+                            marginLeft: "8px",
+                            color: "#28a745",
+                            fontWeight: "bold",
+                          }}
+                        >
+                          ✓ 최적
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {currentData.length > 0 && (
-        <div>
+        <div style={{ marginTop: "30px" }}>
           <h2>Company Sequences ({currentData.length}개)</h2>
           <div
             style={{
@@ -105,12 +261,7 @@ function App() {
               marginTop: "20px",
             }}
           >
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-              }}
-            >
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead
                 style={{
                   position: "sticky",
