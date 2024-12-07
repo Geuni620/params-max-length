@@ -14,9 +14,18 @@ function App() {
       .join("&");
 
     try {
-      const response = await fetch(
-        `http://localhost:8000/test?${queryString.toString()}`
-      );
+      window.history.pushState({}, "", `?${queryString}`);
+
+      const response = await fetch(`http://localhost:8000/test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          companySeqs: queryString,
+        }),
+      });
+
       const data = await response.text();
       console.log("서버 응답:", data);
     } catch (error) {
