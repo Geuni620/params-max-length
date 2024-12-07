@@ -2,20 +2,8 @@ import { useEffect } from "react";
 import "./App.css";
 
 function App() {
-  const onClick = async () => {
-    const randomNumbers = Array.from(
-      { length: 2000 },
-      () => Math.floor(Math.random() * 999) + 1
-    );
-
-    // URL 쿼리 문자열 직접 생성
-    const queryString = randomNumbers
-      .map((num) => `companySeq=${num}`)
-      .join("&");
-
+  const sendRequest = async (queryString: string) => {
     try {
-      window.history.pushState({}, "", `?${queryString}`);
-
       const response = await fetch(`http://localhost:8000/test`, {
         method: "POST",
         headers: {
@@ -33,10 +21,31 @@ function App() {
     }
   };
 
+  const onClick = async () => {
+    const randomNumbers = Array.from(
+      { length: 2000 },
+      () => Math.floor(Math.random() * 999) + 1
+    );
+
+    const queryString = randomNumbers
+      .map((num) => `companySeq=${num}`)
+      .join("&");
+
+    try {
+      window.history.pushState({}, "", `?${queryString}`);
+      await sendRequest(queryString);
+    } catch (error) {
+      console.error("에러 발생:", error);
+    }
+  };
+
   useEffect(() => {
-    fetch("http://localhost:8000/health")
-      .then((res) => res.json())
-      .then((data) => console.log(data));
+    const currentQueryString = window.location.search.slice(1);
+
+    if (currentQueryString) {
+      // URL 상태는 유지하되 POST 요청으로 처리
+      sendRequest(currentQueryString);
+    }
   }, []);
 
   return (
